@@ -42,7 +42,7 @@ if __name__ == "__main__":
         for df in tqdm(dfs):
             temp = list()
             temp_linear = list()
-            for _ in range(100):
+            for _ in range(5):
                 delta = df - 1 - 0.05
                 noise = scipy.stats.t(df=df)
                 x, y, beta_opt = generate_data(noise, n, d)

@@ -69,8 +69,64 @@ class HuberRegressor(BaseEstimator):
         if self.fit_intercept:
             return self.beta[0]
         return 0
+    
+    def lamm(self, X, y, lamb, beta, tau, phi, gamma_u):
+        phiNew = phi
+        grade = -np.mean(
+                self.loss.grad(y - X@beta).reshape(y.shape + (1,)) * X, axis=0
+            )
+        loss = np.mean(self.loss(y , X @ beta))
+        while True:
+            first = beta - grade / phiNew
+            second = lamb / phiNew
+            betaNew = soft_thresholding(first, second)
+            fval = np.mean(self.loss(y , X @ betaNew))
+            diff = betaNew - beta
+            psiVal = loss + grade @ diff + (phiNew / 2) * np.sum(diff ** 2)
+            if fval <= psiVal:
+                break
+            phiNew *= gamma_u
+        
+        return betaNew, phiNew
 
-    def fit(self, X, y, beta_0, phi_0=1e-8, convergence_threshold=1e-6):
+    def fit1(self, X, y, beta_0, phi_0=0.1, convergence_threshold=1e-6):
+        # Add intercept if needed
+        if self.fit_intercept:
+            intercept = np.ones((X.shape[0],))
+            X = np.c_[intercept, X]
+            beta_0 = np.concatenate(([0], beta_0))
+
+        # Assert basic properties
+        assert phi_0 != 0
+        assert beta_0.shape == X.shape[1:]
+
+        # TODO: Implement iteratively reweighted least squares method
+
+        # With regularization: LAMM Algorithm
+        self.logger.info(
+            "Fitting with LAMM algorithm and lambda={}".format(self.lambda_reg)
+        )
+
+        step_counter = 0
+        #beta_k = beta_0
+        beta = np.zeros(X.shape[1])
+        betaNew = np.zeros(X.shape[1])
+        phi = phi_0
+        while(step_counter <= self.max_iter):
+            self.logger.info("Step: {}".format(step_counter))
+            betaNew, phi = self.lamm(X, y, self.lambda_reg, betaNew, self.tau, phi, self.gamma_u)
+            phi = max(phi_0, phi / self.gamma_u)
+            step_counter += 1
+            diff = betaNew - beta
+            norm_diff = np.linalg.norm(diff)
+            if norm_diff < convergence_threshold:
+                break
+            beta = betaNew
+        self.beta = betaNew
+        self.logger.info("Algorithm runned {} iterations.With diff {}".format(step_counter - 1, norm_diff))
+        return self
+
+    def fit(self, X, y, beta_0, phi_0=0.1, convergence_threshold=1e-6):
         # Add intercept if needed
         if self.fit_intercept:
             intercept = np.ones((X.shape[0],))
@@ -99,7 +155,7 @@ class HuberRegressor(BaseEstimator):
             # Find optimal phi
             phi_counter = 0
             pred_k = X @ beta_k
-            loss_k = self.loss(y, pred_k)
+            loss_k = np.mean(self.loss(y, pred_k))
             phi = max(phi_0, phi / self.gamma_u)
             grad_k = -np.mean(
                 self.loss.grad(y - pred_k).reshape(y.shape + (1,)) * X, axis=0
@@ -123,7 +179,9 @@ class HuberRegressor(BaseEstimator):
                 
                 g_k = loss_k + grad_k @ diff + (phi / 2) * norm_diff
 
-                if g_k < self.loss(y, X @ beta_k_1):
+                loss_beta_k_1 = self.loss(y, X @ beta_k_1)
+
+                if g_k <= loss_beta_k_1:
                     phi *= self.gamma_u
                 else:
                     break  # Found good phi
@@ -133,7 +191,7 @@ class HuberRegressor(BaseEstimator):
                 if phi_counter > self.max_phi_iter:
                     raise Exception(
                         """Couldn't find phi with \gamma_u={}! 
-Raising gamma_u might be a good idea!""".format(
+                        Raising gamma_u might be a good idea!""".format(
                             self.gamma_u
                         )
                     )
@@ -161,7 +219,7 @@ Raising gamma_u might be a good idea!""".format(
             if np.sqrt(norm_diff) < convergence_threshold:
                 break
 
-        self.logger.info("Algorithm runned {} iterations.".format(step_counter - 1))
+        self.logger.info("Algorithm runned {} iterations.With diff {}".format(step_counter - 1, np.sqrt(norm_diff)))
         return self
 
     def predict(self, X):
